@@ -1,5 +1,44 @@
-﻿# multiresource-fusion
+# MEx 多源时空对齐融合可视化
 
-本项目面向产业链供应链边缘场景中的多源异构感知数据处理需求，构建了一套多源数据时空对齐与融合分析平台。项目支持对多类异构数据源进行统一加载、预处理、时空对齐、特征融合和状态判别，并通过可视化方式展示对齐前后误差、融合特征时序、数据源贡献占比和最终判别结果。
+该 Web 界面直接读取 `mex.zip` 中的数据，并统一展示为温度图片、振动数据、音频数据和视频数据四类多源异构模态。算法通过最近邻时间匹配建立统一时间轴，随后对四模态特征进行归一化加权融合。
 
-实验中将不同原始活动类别抽象为供应链边缘业务场景，包括稳态运行、启停切换、搬运作业、运输流转、负载变化、冲击扰动和横向转运等场景。算法重点验证多源异构数据在不同业务状态下的时间匹配、特征融合和状态解释能力。
+## 启动
+
+后端使用 Spring Boot，前端使用 Vue/Vite。首次运行需要安装前端依赖并构建静态资源：
+
+```powershell
+cd frontend
+npm install
+npm run build
+cd ..
+mvn spring-boot:run
+```
+
+浏览器访问 <http://127.0.0.1:8080>。
+
+如果提示 `Port 8080 was already in use`，说明 8080 端口已有程序占用。可先查找并停止占用进程：
+
+```powershell
+Get-NetTCPConnection -LocalPort 8080 -State Listen
+Stop-Process -Id <OwningProcess> -Force
+```
+
+也可以临时换端口启动：
+
+```powershell
+mvn spring-boot:run "-Dspring-boot.run.arguments=--server.port=8090"
+```
+
+此时浏览器访问 <http://127.0.0.1:8090>。
+
+开发前端时可分别启动后端和 Vite：
+
+```powershell
+mvn spring-boot:run "-Dspring-boot.run.arguments=--server.port=8090"
+cd frontend
+npm run dev
+```
+
+Vite 开发地址为 <http://127.0.0.1:5173>，`/api` 默认代理到 <http://127.0.0.1:8090> 的 Spring Boot 后端。如需代理到其他端口，可设置 `VITE_API_PROXY_TARGET`。
+
+
