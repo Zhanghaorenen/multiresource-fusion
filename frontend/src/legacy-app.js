@@ -7,6 +7,28 @@ const state = {
   colors: ['#6C7BFF', '#26C6A2', '#F5A45D', '#DA72D6']
 };
 
+const SCENE_NAMES = {
+  '01': '稳态运行场景',
+  '02': '启停切换场景',
+  '03': '搬运作业场景',
+  '04': '运输流转场景',
+  '05': '负载变化场景',
+  '06': '冲击扰动场景',
+  '07': '横向转运场景'
+};
+
+function sceneName(group) {
+  return SCENE_NAMES[group?.id] || SCENE_NAMES[group?.name] || group?.name || group;
+}
+
+function sampleLabel(sample) {
+  return `边缘节点 ${sample.subject} · 第 ${sample.trial} 次`;
+}
+
+function sourceWording(text) {
+  return String(text || '').replaceAll('模态', '数据源');
+}
+
 async function api(path, body) {
   const response = await fetch(path, {
     method: body ? 'POST' : 'GET',
@@ -77,6 +99,25 @@ function metrics(element, items) {
   ).join('');
 }
 
+function afterLayout(callback) {
+  requestAnimationFrame(() => requestAnimationFrame(callback));
+}
+
+function renderPreviewChart(data) {
+  chart($('#previewChart'), data.series);
+  legend($('#previewLegend'), data.series);
+}
+
+function renderAlignCharts(data) {
+  chart($('#alignChart'), data.aligned);
+  legend($('#alignLegend'), data.aligned);
+}
+
+function renderFusionCharts(data) {
+  chart($('#fusionChart'), [{name: '融合特征', color: '#16bfa6', points: data.fusedSeries}], {bold: true});
+  donut($('#donutChart'), data.contribution);
+}
+
 async function init() {
   try {
     const data = await api('/api/dataset');
@@ -89,7 +130,7 @@ async function init() {
 
 function renderGroups() {
   $('#groups').innerHTML = state.groups.map(group =>
-    `<button class="group-card ${group.id === state.activity ? 'active' : ''}" data-id="${group.id}"><i></i><b>${group.name}</b><small>${group.count} 组同步样本</small></button>`
+    `<button class="group-card ${group.id === state.activity ? 'active' : ''}" data-id="${group.id}"><i></i><b>${sceneName(group)}</b><small>${group.count} 组同步样本</small></button>`
   ).join('');
   $$('.group-card').forEach(card => card.onclick = () => chooseGroup(card.dataset.id));
 }
@@ -100,15 +141,15 @@ async function chooseGroup(id) {
   state.subject = group.samples[0].subject; state.trial = group.samples[0].trial;
   renderGroups();
   $('#sampleSelect').innerHTML = group.samples.map(sample =>
-    `<option value="${sample.subject}|${sample.trial}">${sample.label}</option>`
+    `<option value="${sample.subject}|${sample.trial}">${sampleLabel(sample)}</option>`
   ).join('');
-  $('#selectionName').textContent = `${group.name} · 受试者 ${state.subject}`;
+  $('#selectionName').textContent = `${sceneName(group)} · 边缘节点 ${state.subject}`;
   resetStages(); await preview();
 }
 
 $('#sampleSelect').onchange = async event => {
   [state.subject, state.trial] = event.target.value.split('|');
-  $('#selectionName').textContent = `${state.groups.find(item => item.id === state.activity).name} · 受试者 ${state.subject}`;
+  $('#selectionName').textContent = `${sceneName(state.groups.find(item => item.id === state.activity))} · 边缘节点 ${state.subject}`;
   resetStages(); await preview();
 };
 
@@ -120,10 +161,10 @@ function resetStages() {
 }
 
 async function preview() {
-  setStatus('读取中', '正在载入四模态数据');
+  setStatus('读取中', '正在加载多源异构数据');
   try {
     const data = await api('/api/preview', selection());
-    chart($('#previewChart'), data.series); legend($('#previewLegend'), data.series);
+    afterLayout(() => renderPreviewChart(data));
     $('#previewMeta').textContent = `${data.rows} 个采样点 · ${data.duration}s`;
     setStatus('待处理', '数据已就绪');
   } catch (error) { setStatus('读取失败', error.message, '#e05c67'); }
@@ -145,15 +186,16 @@ $('#alignBtn').onclick = async () => {
   const button = $('#alignBtn'); button.disabled = true; $('.pipeline').classList.add('running');
   $('#alignEngine').textContent = '计算中…'; setStatus('正在对齐', '构建统一时间轴', '#6c63ff');
   const progress = animateProgress($('#alignProgress'), $('#alignPct'), $('#alignProgressText'),
-    ['正在读取多源数据时间戳…', '建立统一基准时间轴…', '执行跨模态时间匹配…', '计算对齐质量指标…']);
+    ['正在读取多源数据时间戳…', '建立统一基准时间轴…', '执行跨数据源时间匹配…', '计算对齐质量指标…']);
   try {
     const [data, finish] = await Promise.all([api('/api/align', selection()), progress]); finish();
     await new Promise(resolve => setTimeout(resolve, 300)); state.alignment = data;
     $('.pipeline').classList.remove('running'); $('#alignEngine').textContent = '对齐完成';
     $('#alignedPoints').textContent = `${data.summary.points} 个对齐点`;
     $('#beforeRmse').textContent = `${data.summary.beforeRmse} ms`; $('#afterRmse').textContent = `${data.summary.afterRmse} ms`;
-    chart($('#alignChart'), data.aligned); legend($('#alignLegend'), data.aligned); metrics($('#alignMetrics'), data.metrics);
+    metrics($('#alignMetrics'), data.metrics);
     $('#alignResults').classList.remove('hidden'); $('#fusionPanel').classList.remove('disabled'); $('#fusionPanel').classList.add('ready');
+    afterLayout(() => renderAlignCharts(data));
     $('#fuseBtn').disabled = false; setStatus('对齐完成', `成功率 ${data.summary.successRate}%`, '#16bfa6');
     setTimeout(() => $('#alignProgress').classList.add('hidden'), 500);
   } catch (error) { setStatus('对齐失败', error.message, '#e05c67'); }
@@ -172,6 +214,7 @@ $('#fuseBtn').onclick = async () => {
     await new Promise(resolve => setTimeout(resolve, 1800)); clearInterval(timer); $('#fusionPct').textContent = '100%';
     await new Promise(resolve => setTimeout(resolve, 250)); $('#fusionAnimation').classList.add('hidden');
     state.fusion = data; renderFusion(data); saveHistory(data, weights); $('#fusionResults').classList.remove('hidden');
+    afterLayout(() => renderFusionCharts(data));
     setStatus('处理完成', '结果可导出', '#16bfa6');
     $('#export').href = `/api/export?subject=${state.subject}&activity=${state.activity}&trial=${state.trial}`;
     setTimeout(() => $('#fusionResults').scrollIntoView({behavior: 'smooth', block: 'start'}), 100);
@@ -185,15 +228,14 @@ function renderFusion(data) {
   $('#decisionLabel').textContent = decision.label; $('#decisionScore').textContent = decision.score.toFixed(4);
   $('#decisionConfidence').textContent = `${decision.confidence}%`; $('#decisionSources').textContent = decision.mainSources.join('、');
   $('#decisionAlignment').textContent = `${decision.alignment}（${decision.alignmentRate}%）`;
-  $('#decisionRule').textContent = decision.rule; $('#decisionReason').textContent = decision.reason; $('#decisionNote').textContent = decision.note;
+  $('#decisionRule').textContent = decision.rule; $('#decisionReason').textContent = sourceWording(decision.reason);
+  $('#decisionNote').textContent = '主要贡献数据源由各数据源异常得分与融合权重共同决定，并非仅由权重决定。';
 
   $('#coreBeforeRmse').textContent = `${data.summary.beforeRmse} ms`; $('#coreAfterRmse').textContent = `${data.summary.afterRmse} ms`;
   $('#coreFusionScore').textContent = decision.score.toFixed(4); $('#coreConfidence').textContent = `${decision.confidence}%`;
   $('#coreSource').textContent = decision.mainSources.join('、'); $('#coreSuccessRate').textContent = `${data.summary.successRate}%`;
   $('#fusionAxisLabel').textContent = `真实时间 0～${data.summary.duration.toFixed(2)} s`;
 
-  chart($('#fusionChart'), [{name: '融合特征', color: '#16bfa6', points: data.fusedSeries}], {bold: true});
-  donut($('#donutChart'), data.contribution);
   $('#donutLegend').innerHTML = data.contribution.map((item, index) =>
     `<div><i style="background:${state.colors[index]}"></i>${item.name} ${item.value}%</div>`
   ).join('');
@@ -227,7 +269,7 @@ function saveHistory(data, weights) {
   const group = state.groups.find(item => item.id === state.activity);
   const records = historyData();
   records.unshift({
-    time: new Date().toLocaleString('zh-CN'), group: group?.name || state.activity,
+    time: new Date().toLocaleString('zh-CN'), group: sceneName(group) || state.activity,
     subject: state.subject, trial: state.trial, label: data.decision.label,
     score: data.decision.score, confidence: data.decision.confidence,
     beforeRmse: data.summary.beforeRmse, afterRmse: data.summary.afterRmse,
@@ -239,7 +281,7 @@ function saveHistory(data, weights) {
 function renderHistory() {
   const records = historyData();
   $('#historyList').innerHTML = records.length ? records.map(item =>
-    `<article class="history-item"><div><b>${item.group} · 受试者 ${item.subject}</b><span class="history-label">${item.label}</span></div><small>${item.time}</small><p>融合得分 ${item.score.toFixed(4)} · 置信度 ${item.confidence}% · 对齐成功率 ${item.successRate}%</p><p>RMSE ${item.beforeRmse} → ${item.afterRmse} ms · 主要贡献：${item.sources.join('、')}</p></article>`
+    `<article class="history-item"><div><b>${SCENE_NAMES[item.group] || item.group} · 边缘节点 ${item.subject}</b><span class="history-label">${item.label}</span></div><small>${item.time}</small><p>融合得分 ${item.score.toFixed(4)} · 置信度 ${item.confidence}% · 对齐成功率 ${item.successRate}%</p><p>RMSE ${item.beforeRmse} → ${item.afterRmse} ms · 主要贡献数据源：${item.sources.join('、')}</p></article>`
   ).join('') : '<div class="history-empty">暂无历史记录<br><small>完成一次对齐融合后将在这里显示</small></div>';
 }
 
@@ -249,8 +291,8 @@ $('#workspaceBtn').onclick = () => $('#historyClose').click();
 $('#clearHistory').onclick = () => { localStorage.removeItem('fusionHistory'); renderHistory(); };
 
 window.addEventListener('resize', () => {
-  if (state.alignment) chart($('#alignChart'), state.alignment.aligned);
-  if (state.fusion) { chart($('#fusionChart'), [{name: '融合特征', color: '#16bfa6', points: state.fusion.fusedSeries}], {bold: true}); donut($('#donutChart'), state.fusion.contribution); }
+  if (state.alignment) renderAlignCharts(state.alignment);
+  if (state.fusion) renderFusionCharts(state.fusion);
 });
 
 init();
