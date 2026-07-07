@@ -1,1 +1,0 @@
-# Web 版本已迁移到 Spring Boot + Vue，不再需要 Python Web 依赖。
